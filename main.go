@@ -88,7 +88,7 @@ func (c *ionosDNSProviderSolver) Present(ch *v1alpha1.ChallengeRequest) error {
 
 	for _, record := range records {
 		// check if key is present
-		if record.Name != ch.ResolvedFQDN {
+		if record.Name+"." != ch.ResolvedFQDN {
 			continue
 		}
 		record_id = record.UUID
@@ -137,12 +137,12 @@ func (c *ionosDNSProviderSolver) CleanUp(ch *v1alpha1.ChallengeRequest) error {
 	}
 
 	for _, record := range records {
-		if record.Name != ch.ResolvedFQDN {
+		if record.Name+"." != ch.ResolvedFQDN {
 			continue
 		}
 
-		fmt.Print("deleting record " + record.UUID)
-		err = c.deleteRecord(cfg, ch, record.UUID)
+		fmt.Println("deleting record " + record.UUID)
+		err = c.deleteRecord(cfg, ch, zone_id, record.UUID)
 
 		if err != nil {
 			return err
@@ -232,7 +232,7 @@ func (c *ionosDNSProviderSolver) getZoneId(cfg ionosDNSProviderConfig, ch *v1alp
 	}
 
 	for _, element := range zones {
-		if element.Name == ch.ResolvedZone {
+		if element.Name+"." == ch.ResolvedZone {
 			return element.UUID, nil
 		}
 	}
@@ -246,8 +246,7 @@ func (c ionosDNSProviderSolver) listRecords(cfg ionosDNSProviderConfig, ch *v1al
 		return nil, err
 	}
 
-	req, err := http.NewRequest(http.MethodGet, cfg.Endpoint+"/v1/zones/"+zoneId, nil)
-
+	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("%s/v1/zones/%s", cfg.Endpoint, zoneId), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -278,7 +277,7 @@ func (c ionosDNSProviderSolver) listRecords(cfg ionosDNSProviderConfig, ch *v1al
 	record := make([]Record, 0)
 
 	for _, element := range zone.Records {
-		if element.Type != "TXT" || element.Name != ch.ResolvedZone {
+		if element.Type != "TXT" || element.Name+"." != ch.ResolvedFQDN {
 			continue
 		}
 
@@ -377,13 +376,13 @@ func (c ionosDNSProviderSolver) updateRecord(cfg ionosDNSProviderConfig, ch *v1a
 	return nil
 }
 
-func (c ionosDNSProviderSolver) deleteRecord(cfg ionosDNSProviderConfig, ch *v1alpha1.ChallengeRequest, record_id string) error {
+func (c ionosDNSProviderSolver) deleteRecord(cfg ionosDNSProviderConfig, ch *v1alpha1.ChallengeRequest, zone_id string, record_id string) error {
 	secret, err := c.getApiKey(cfg, ch.ResourceNamespace)
 	if err != nil {
 		return err
 	}
 
-	req, err := http.NewRequest(http.MethodDelete, cfg.Endpoint+"/v1/zones/"+ch.ResolvedZone+"/records/"+record_id, nil)
+	req, err := http.NewRequest(http.MethodDelete, cfg.Endpoint+"/v1/zones/"+zone_id+"/records/"+record_id, nil)
 	if err != nil {
 		return err
 	}
