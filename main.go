@@ -20,6 +20,8 @@ import (
 	"github.com/jetstack/cert-manager/pkg/acme/webhook/cmd"
 )
 
+const HEADER_NAME = "X-API-Key"
+
 type Zone struct {
 	UUID    string   `json:"id"`
 	Name    string   `json:"name"`
@@ -50,123 +52,138 @@ func main() {
 }
 
 type ionosDNSProviderSolver struct {
+	// TODO: cache zone id
 	client *kubernetes.Clientset
 }
 
 type ionosDNSProviderConfig struct {
-	Endpoint         string                   `json:"endpoint"`
-	AuthAPIKey       string                   `json:"authApiKey"`
-	AuthAPISecretRef corev1.SecretKeySelector `json:"authApiSecretRef"`
-	BaseURL          string                   `json:"baseUrl"`
 	TTL              int                      `json:"ttl"`
+	Endpoint         string                   `json:"host"`
+	APIKey           string                   `josn:"apiKey"`
+	AuthAPISecretRef corev1.SecretKeySelector `json:"apiKeySecretRef"`
 }
 
-// Name is used as the name for this DNS solver when referencing it on the ACME
-// Issuer resource.
-// This should be unique **within the group name**, i.e. you can have two
-// solvers configured with the same Name() **so long as they do not co-exist
-// within a single webhook deployment**.
-// For example, `cloudflare` may be used as the name of a solver.
 func (c *ionosDNSProviderSolver) Name() string {
 	return "ionos"
 }
 
-// Present is responsible for actually presenting the DNS record with the
-// DNS provider.
-// This method should tolerate being called multiple times with the same value.
-// cert-manager itself will later perform a self check to ensure that the
-// solver has correctly configured the DNS provider.
 func (c *ionosDNSProviderSolver) Present(ch *v1alpha1.ChallengeRequest) error {
 	cfg, err := loadConfig(ch.Config)
 	if err != nil {
 		return err
 	}
 
-	record := &Record{
-		Name:     ch.ResolvedFQDN,
-		Type:     "TXT",
-		Content:  ch.Key,
-		TTL:      *&cfg.TTL,
-		Priority: 0,
-		Disabled: false,
-	}
-
-	recordArray := []Record{*record}
-
-	jsonValue, err := json.Marshal(recordArray)
-	body := bytes.NewBuffer(jsonValue)
-
-	fmt.Println(body)
-
+	zone_id, err := c.getZoneId(cfg, ch)
 	if err != nil {
 		return err
 	}
 
-	req, err := http.NewRequest(http.MethodPost, ch.Endpoint+"/v1/zones/"+ch.ResolvedZone+"/records", body)
-
+	records, err := c.listRecords(cfg, ch, zone_id)
 	if err != nil {
 		return err
 	}
 
-	req.Header.Add(HEADER_NAME, PREFIX+"."+SECRET)
-	req.Header.Add("Content-Type", "application/json")
-	req.Header.Add("Accept", "application/json")
+	var record_id = ""
+	var is_present = false
 
-	client := new(http.Client)
+	for _, record := range records {
+		// check if key is present
+		if record.Name != ch.ResolvedFQDN {
+			continue
+		}
+		record_id = record.UUID
 
-	resp, err := client.Do(req)
+		// check if value is already set
+		// IONOS double quotes TXT record content
+		if record.Content != "\""+ch.Key+"\"" {
+			continue
+		}
 
-	if err != nil || resp.StatusCode != 201 {
-		return
+		is_present = true
+		break
 	}
+
+	if record_id != "" && is_present == true {
+		fmt.Println("challenge already set")
+		return nil
+	}
+
+	if record_id != "" {
+		fmt.Println("challenge data must be updated")
+		c.updateRecord(cfg, ch, zone_id, record_id)
+		return nil
+	}
+
+	fmt.Println("challenge data must be set")
+	c.createRecord(cfg, ch, zone_id)
 
 	return nil
 }
 
-// CleanUp should delete the relevant TXT record from the DNS provider console.
-// If multiple TXT records exist with the same record name (e.g.
-// _acme-challenge.example.com) then **only** the record with the same `key`
-// value provided on the ChallengeRequest should be cleaned up.
-// This is in order to facilitate multiple DNS validations for the same domain
-// concurrently.
 func (c *ionosDNSProviderSolver) CleanUp(ch *v1alpha1.ChallengeRequest) error {
 	cfg, err := loadConfig(ch.Config)
 	if err != nil {
 		return err
 	}
 
-	req, err := http.NewRequest(http.MethodDelete, cfg.BaseURL+"/v1/zones/"+zone+"/records/"+record_id, nil)
-
+	zone_id, err := c.getZoneId(cfg, ch)
 	if err != nil {
 		return err
 	}
 
-	req.Header.Add(HEADER_NAME, PREFIX+"."+SECRET)
-	req.Header.Add("Content-Type", "application/json")
-	req.Header.Add("Accept", "application/json")
-
-	client := new(http.Client)
-
-	resp, err := client.Do(req)
-
-	fmt.Println(resp.StatusCode)
-
-	if err != nil || resp.StatusCode != 200 {
-		return nil
+	records, err := c.listRecords(cfg, ch, zone_id)
+	if err != nil {
+		return err
 	}
+
+	for _, record := range records {
+		if record.Name != ch.ResolvedFQDN {
+			continue
+		}
+
+		fmt.Print("deleting record " + record.UUID)
+		err = c.deleteRecord(cfg, ch, record.UUID)
+
+		if err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
-func (c *ionosDNSProviderSolver) validateAndGetSecret(cfg *ionosDNSProviderConfig, namespace string) (string, error) {
-	fmt.Printf("validateAndGetSecret...")
-	// Check that the host is defined
-	if cfg.AuthAPIKey != "" {
-		return cfg.AuthAPIKey, nil
+func (c *ionosDNSProviderSolver) Initialize(kubeClientConfig *rest.Config, stopCh <-chan struct{}) error {
+	cl, err := kubernetes.NewForConfig(kubeClientConfig)
+	if err != nil {
+		return err
 	}
 
-	// Try to load the API key
+	c.client = cl
+
+	return nil
+}
+
+func loadConfig(cfgJSON *extapi.JSON) (ionosDNSProviderConfig, error) {
+	cfg := ionosDNSProviderConfig{}
+	if cfgJSON == nil {
+		return cfg, nil
+	}
+	if err := json.Unmarshal(cfgJSON.Raw, &cfg); err != nil {
+		return cfg, fmt.Errorf("error decoding solver config: %v", err)
+	}
+
+	return cfg, nil
+}
+
+func (c ionosDNSProviderSolver) getApiKey(cfg ionosDNSProviderConfig, namespace string) (string, error) {
+	// api key specified directly
+	if cfg.APIKey != "" {
+		return cfg.APIKey, nil
+	}
+
+	// api key specified using secrets (recommended)
 	if cfg.AuthAPISecretRef.LocalObjectReference.Name == "" {
-		return "", errors.New("No Arvan API secret provided")
+		return "", errors.New("no secret provided")
 	}
 
 	sec, err := c.client.CoreV1().Secrets(namespace).Get(context.TODO(), cfg.AuthAPISecretRef.LocalObjectReference.Name, metav1.GetOptions{})
@@ -184,51 +201,18 @@ func (c *ionosDNSProviderSolver) validateAndGetSecret(cfg *ionosDNSProviderConfi
 	return apiKey, nil
 }
 
-// Initialize will be called when the webhook first starts.
-// This method can be used to instantiate the webhook, i.e. initialising
-// connections or warming up caches.
-// Typically, the kubeClientConfig parameter is used to build a Kubernetes
-// client that can be used to fetch resources from the Kubernetes API, e.g.
-// Secret resources containing credentials used to authenticate with DNS
-// provider accounts.
-// The stopCh can be used to handle early termination of the webhook, in cases
-// where a SIGTERM or similar signal is sent to the webhook process.
-func (c *ionosDNSProviderSolver) Initialize(kubeClientConfig *rest.Config, stopCh <-chan struct{}) error {
-	cl, err := kubernetes.NewForConfig(kubeClientConfig)
-	if err != nil {
-		return err
-	}
-
-	c.client = cl
-
-	return nil
-}
-
-// loadConfig is a small helper function that decodes JSON configuration into
-// the typed config struct.
-func loadConfig(cfgJSON *extapi.JSON) (ionosDNSProviderConfig, error) {
-	cfg := ionosDNSProviderConfig{}
-	// handle the 'base case' where no configuration has been provided
-	if cfgJSON == nil {
-		return cfg, nil
-	}
-	if err := json.Unmarshal(cfgJSON.Raw, &cfg); err != nil {
-		return cfg, fmt.Errorf("error decoding solver config: %v", err)
-	}
-
-	return cfg, nil
-}
-
-const HEADER_NAME = "X-API-Key"
-
-func (c *ionosDNSProviderSolver) findManagedZoneID(cfg *ionosDNSProviderConfig, domain string, namespace string) (string, error) {
-	req, err := http.NewRequest(http.MethodGet, cfg.BaseURL+"/v1/zones", nil)
+func (c *ionosDNSProviderSolver) getZoneId(cfg ionosDNSProviderConfig, ch *v1alpha1.ChallengeRequest) (string, error) {
+	req, err := http.NewRequest(http.MethodGet, cfg.Endpoint+"/v1/zones", nil)
 	if err != nil {
 		return "", err
 	}
 
-	secret, _ := c.validateAndGetSecret(cfg, namespace)
-	req.Header.Add(HEADER_NAME, cfg.AuthAPIKey+"."+secret)
+	secret, err := c.getApiKey(cfg, ch.ResourceNamespace)
+	if err != nil {
+		return "", err
+	}
+
+	req.Header.Add(HEADER_NAME, secret)
 
 	client := new(http.Client)
 	resp, err := client.Do(req)
@@ -248,10 +232,175 @@ func (c *ionosDNSProviderSolver) findManagedZoneID(cfg *ionosDNSProviderConfig, 
 	}
 
 	for _, element := range zones {
-		if element.Name == domain {
+		if element.Name == ch.ResolvedZone {
 			return element.UUID, nil
 		}
 	}
 
 	return "", errors.New("domain not available in account")
+}
+
+func (c ionosDNSProviderSolver) listRecords(cfg ionosDNSProviderConfig, ch *v1alpha1.ChallengeRequest, zoneId string) ([]Record, error) {
+	secret, err := c.getApiKey(cfg, ch.ResourceNamespace)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, cfg.Endpoint+"/v1/zones/"+zoneId, nil)
+
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add(HEADER_NAME, secret)
+	req.Header.Add("Accept", "application/json")
+
+	client := new(http.Client)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != 200 {
+		return nil, errors.New(fmt.Sprintf("invalid http response: %d", resp.StatusCode))
+	}
+
+	defer resp.Body.Close()
+
+	zone := new(Zone)
+	err = json.NewDecoder(resp.Body).Decode(zone)
+
+	if err != nil {
+		return nil, err
+	}
+
+	record := make([]Record, 0)
+
+	for _, element := range zone.Records {
+		if element.Type != "TXT" || element.Name != ch.ResolvedZone {
+			continue
+		}
+
+		record = append(record, element)
+	}
+
+	return record, nil
+}
+
+func (c ionosDNSProviderSolver) createRecord(cfg ionosDNSProviderConfig, ch *v1alpha1.ChallengeRequest, zoneId string) error {
+	secret, err := c.getApiKey(cfg, ch.ResourceNamespace)
+	if err != nil {
+		return err
+	}
+
+	record := &Record{
+		Name:     ch.ResolvedFQDN,
+		Type:     "TXT",
+		Content:  ch.Key,
+		TTL:      cfg.TTL,
+		Priority: 0,
+		Disabled: false,
+	}
+
+	recordArray := []Record{*record}
+	jsonValue, err := json.Marshal(recordArray)
+	if err != nil {
+		return err
+	}
+
+	body := bytes.NewBuffer(jsonValue)
+	req, err := http.NewRequest(http.MethodPost, cfg.Endpoint+"/v1/zones/"+zoneId+"/records", body)
+	if err != nil {
+		return err
+	}
+
+	req.Header.Add(HEADER_NAME, secret)
+	req.Header.Add("Content-Type", "application/json")
+	req.Header.Add("Accept", "application/json")
+
+	client := new(http.Client)
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+
+	if resp.StatusCode != 201 {
+		return errors.New(fmt.Sprintf("invalid http response: %d", resp.StatusCode))
+	}
+
+	return nil
+}
+
+func (c ionosDNSProviderSolver) updateRecord(cfg ionosDNSProviderConfig, ch *v1alpha1.ChallengeRequest, zone_id string, record_id string) error {
+	secret, err := c.getApiKey(cfg, ch.ResourceNamespace)
+	if err != nil {
+		return err
+	}
+
+	record := &Record{
+		Content:  ch.Key,
+		TTL:      60,
+		Priority: 0,
+		Disabled: false,
+	}
+
+	jsonValue, err := json.Marshal(record)
+	body := bytes.NewBuffer(jsonValue)
+
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, cfg.Endpoint+"/v1/zones/"+zone_id+"/records/"+record_id, body)
+
+	if err != nil {
+		return err
+	}
+
+	req.Header.Add(HEADER_NAME, secret)
+	req.Header.Add("Content-Type", "application/json")
+	req.Header.Add("Accept", "application/json")
+
+	client := new(http.Client)
+
+	resp, err := client.Do(req)
+
+	if err != nil {
+		return err
+	}
+
+	if resp.StatusCode != 200 {
+		return errors.New(fmt.Sprintf("invalid http response: %d", resp.StatusCode))
+	}
+
+	return nil
+}
+
+func (c ionosDNSProviderSolver) deleteRecord(cfg ionosDNSProviderConfig, ch *v1alpha1.ChallengeRequest, record_id string) error {
+	secret, err := c.getApiKey(cfg, ch.ResourceNamespace)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, cfg.Endpoint+"/v1/zones/"+ch.ResolvedZone+"/records/"+record_id, nil)
+	if err != nil {
+		return err
+	}
+
+	req.Header.Add(HEADER_NAME, secret)
+	req.Header.Add("Content-Type", "application/json")
+	req.Header.Add("Accept", "application/json")
+
+	client := new(http.Client)
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+
+	if resp.StatusCode != 200 {
+		return errors.New(fmt.Sprintf("invalid http response: %d", resp.StatusCode))
+	}
+
+	return nil
 }
