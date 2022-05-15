@@ -1,25 +1,25 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "cert-manager-webhook-ionos.fullname" . }}
+  name: {{ include "webhook-ionos.fullname" . }}
   labels:
-    app: {{ include "cert-manager-webhook-ionos.name" . }}
-    chart: {{ include "cert-manager-webhook-ionos.chart" . }}
+    app: {{ include "webhook-ionos.name" . }}
+    chart: {{ include "webhook-ionos.chart" . }}
     release: {{ .Release.Name }}
     heritage: {{ .Release.Service }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      app: {{ include "cert-manager-webhook-ionos.name" . }}
+      app: {{ include "webhook-ionos.name" . }}
       release: {{ .Release.Name }}
   template:
     metadata:
       labels:
-        app: {{ include "cert-manager-webhook-ionos.name" . }}
+        app: {{ include "webhook-ionos.name" . }}
         release: {{ .Release.Name }}
     spec:
-      serviceAccountName: {{ include "cert-manager-webhook-ionos.fullname" . }}
+      serviceAccountName: {{ include "webhook-ionos.fullname" . }}
       containers:
         - name: {{ .Chart.Name }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -53,7 +53,7 @@ spec:
       volumes:
         - name: certs
           secret:
-            secretName: {{ include "cert-manager-webhook-ionos.servingCertificate" . }}
+            secretName: {{ include "webhook-ionos.servingCertificate" . }}
     {{- with .Values.nodeSelector }}
       nodeSelector:
 {{ toYaml . | indent 8 }}
