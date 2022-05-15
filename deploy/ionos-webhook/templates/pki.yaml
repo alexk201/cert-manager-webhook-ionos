@@ -4,11 +4,11 @@
 apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata:
-  name: {{ include "cert-manager-webhook-ionos.selfSignedIssuer" . }}
+  name: {{ include "webhook-ionos.selfSignedIssuer" . }}
   namespace: {{ .Release.Namespace | quote }}
   labels:
-    app: {{ include "cert-manager-webhook-ionos.name" . }}
-    chart: {{ include "cert-manager-webhook-ionos.chart" . }}
+    app: {{ include "webhook-ionos.name" . }}
+    chart: {{ include "webhook-ionos.chart" . }}
     release: {{ .Release.Name }}
     heritage: {{ .Release.Service }}
 spec:
@@ -20,19 +20,19 @@ spec:
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: {{ include "cert-manager-webhook-ionos.rootCACertificate" . }}
+  name: {{ include "webhook-ionos.rootCACertificate" . }}
   namespace: {{ .Release.Namespace | quote }}
   labels:
-    app: {{ include "cert-manager-webhook-ionos.name" . }}
-    chart: {{ include "cert-manager-webhook-ionos.chart" . }}
+    app: {{ include "webhook-ionos.name" . }}
+    chart: {{ include "webhook-ionos.chart" . }}
     release: {{ .Release.Name }}
     heritage: {{ .Release.Service }}
 spec:
-  secretName: {{ include "cert-manager-webhook-ionos.rootCACertificate" . }}
+  secretName: {{ include "webhook-ionos.rootCACertificate" . }}
   duration: 43800h # 5y
   issuerRef:
-    name: {{ include "cert-manager-webhook-ionos.selfSignedIssuer" . }}
-  commonName: "ca.cert-manager-webhook-ionos.cert-manager"
+    name: {{ include "webhook-ionos.selfSignedIssuer" . }}
+  commonName: "ca.webhook-ionos.cert-manager"
   isCA: true
 
 ---
@@ -41,16 +41,16 @@ spec:
 apiVersion: cert-manager.io/v1
 kind: Issuer
 metadata:
-  name: {{ include "cert-manager-webhook-ionos.rootCAIssuer" . }}
+  name: {{ include "webhook-ionos.rootCAIssuer" . }}
   namespace: {{ .Release.Namespace | quote }}
   labels:
-    app: {{ include "cert-manager-webhook-ionos.name" . }}
-    chart: {{ include "cert-manager-webhook-ionos.chart" . }}
+    app: {{ include "webhook-ionos.name" . }}
+    chart: {{ include "webhook-ionos.chart" . }}
     release: {{ .Release.Name }}
     heritage: {{ .Release.Service }}
 spec:
   ca:
-    secretName: {{ include "cert-manager-webhook-ionos.rootCACertificate" . }}
+    secretName: {{ include "webhook-ionos.rootCACertificate" . }}
 
 ---
 
@@ -58,19 +58,19 @@ spec:
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: {{ include "cert-manager-webhook-ionos.servingCertificate" . }}
+  name: {{ include "webhook-ionos.servingCertificate" . }}
   namespace: {{ .Release.Namespace | quote }}
   labels:
-    app: {{ include "cert-manager-webhook-ionos.name" . }}
-    chart: {{ include "cert-manager-webhook-ionos.chart" . }}
+    app: {{ include "webhook-ionos.name" . }}
+    chart: {{ include "webhook-ionos.chart" . }}
     release: {{ .Release.Name }}
     heritage: {{ .Release.Service }}
 spec:
-  secretName: {{ include "cert-manager-webhook-ionos.servingCertificate" . }}
+  secretName: {{ include "webhook-ionos.servingCertificate" . }}
   duration: 8760h # 1y
   issuerRef:
-    name: {{ include "cert-manager-webhook-ionos.rootCAIssuer" . }}
+    name: {{ include "webhook-ionos.rootCAIssuer" . }}
   dnsNames:
-  - {{ include "cert-manager-webhook-ionos.fullname" . }}
-  - {{ include "cert-manager-webhook-ionos.fullname" . }}.{{ .Release.Namespace }}
-  - {{ include "cert-manager-webhook-ionos.fullname" . }}.{{ .Release.Namespace }}.svc
+  - {{ include "webhook-ionos.fullname" . }}
+  - {{ include "webhook-ionos.fullname" . }}.{{ .Release.Namespace }}
+  - {{ include "webhook-ionos.fullname" . }}.{{ .Release.Namespace }}.svc

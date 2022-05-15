@@ -5,12 +5,12 @@ certManager:
   serviceAccountName: cert-manager
 
 image:
-  repository: localhost:32000/cert-manager-webhook-ionos
+  repository: localhost:32000/webhook-ionos
   tag: 1.0.0
   pullPolicy: IfNotPresent
 
-nameOverride: "cert-manager-webhook-ionos"
-fullnameOverride: "cert-manager-webhook-ionos-chart"
+nameOverride: "webhook-ionos"
+fullnameOverride: "webhook-ionos-chart"
 
 service:
   type: ClusterIP
