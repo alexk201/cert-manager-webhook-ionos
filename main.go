@@ -216,6 +216,10 @@ func (c *ionosDNSProviderSolver) getZoneId(cfg ionosDNSProviderConfig, ch *v1alp
 	client := new(http.Client)
 	resp, err := client.Do(req)
 
+	if resp.StatusCode != 200 {
+		return "", errors.New(fmt.Sprintf("invalid http response: %d", resp.StatusCode))
+	}
+
 	if err != nil {
 		return "", err
 	}
