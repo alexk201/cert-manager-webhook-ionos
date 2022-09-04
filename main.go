@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/cert-manager/cert-manager/pkg/acme/webhook/apis/acme/v1alpha1"
 	"github.com/cert-manager/cert-manager/pkg/acme/webhook/cmd"
@@ -235,7 +236,7 @@ func (c *ionosDNSProviderSolver) getZoneId(cfg ionosDNSProviderConfig, ch *v1alp
 	}
 
 	for _, element := range zones {
-		if element.Name+"." == ch.ResolvedZone {
+		if strings.HasSuffix(ch.ResolvedZone, element.Name+".") {
 			return element.UUID, nil
 		}
 	}
